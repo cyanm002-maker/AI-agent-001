@@ -5,12 +5,15 @@ require("dotenv").config();
 const authMiddleware = require("./middleware/authMiddleware");
 
 const app = express();
+const githubRoutes = require("./routes/githubRoutes");
 
 app.use(cors({
     origin: "http://localhost:5173"
 }));
 
 app.use(express.json());
+
+app.use("/api/github", githubRoutes);
 
 // public api
 app.get("/api/health",(req,res)=>{
