@@ -10,7 +10,7 @@ const app = express();
 // this contains all the imported routes for this project
 const githubRoutes = require("./routes/githubRoutes");
 const repositoryRoute = require("./routes/repositoryRoute");
-
+const aiRoutes = require("./routes/aiRoutes");
 
 app.use(cors({
     origin: "http://localhost:5173"
@@ -20,7 +20,7 @@ app.use(express.json());
 
 app.use("/api/github", githubRoutes);
 app.use("/api/repositories",repositoryRoute);
-
+app.use("/api/ai", aiRoutes);
 
 // public api
 app.get("/api/health",(req,res)=>{
