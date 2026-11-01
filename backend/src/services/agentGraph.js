@@ -1,3 +1,5 @@
+const { generateDiff } = require("./diffService");
+
 const {
     Annotation,
     StateGraph,
@@ -338,15 +340,20 @@ const agent = new StateGraph(AgentState)
 const runRepositoryAgent = async (input) => {
     const result = await agent.invoke(input);
 
+    const diffs = generateDiff(
+        result.sourceCode || [],
+        result.proposedChanges || []
+    );
+
     return {
         repository: result.repository,
         relevantFiles: result.relevantFiles,
         sourceCode: result.sourceCode,
         analysis: result.analysis,
-        proposedChanges: result.proposedChanges
+        proposedChanges: result.proposedChanges,
+        diffs
     };
 };
-
 module.exports = {
     runAgent,
     runRepositoryAgent

@@ -5,6 +5,12 @@ const authMiddleware = require("../middleware/authMiddleware");
 const { runAgent } = require("../services/agentGraph");
 const { runRepositoryAgent } = require("../services/agentGraph");
 
+const {
+    createWorkspace,
+    applyProposedChanges,
+    removeWorkspace
+} = require("../services/workspaceService");
+
 // POST /api/ai/chat
 router.post("/chat", authMiddleware, async (req, res) => {
     try {
@@ -96,6 +102,83 @@ router.post("/analyze-issue", authMiddleware, async (req, res) => {
             success: false,
             message: "Failed to analyze repository issue."
         });
+    }
+});
+
+router.post("/prepare-workspace", authMiddleware, async (req, res) => {
+    let workspacePath;
+
+    try {
+        const {
+            installation_id,
+            owner,
+            repo,
+            proposedChanges
+        } = req.body;
+
+        if (
+            !Number.isSafeInteger(installation_id) ||
+            !owner ||
+            !repo ||
+            !Array.isArray(proposedChanges)
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid workspace details."
+            });
+        }
+
+        if (
+            !/^[a-zA-Z0-9-]+$/.test(owner) ||
+            !/^[a-zA-Z0-9._-]+$/.test(repo) ||
+            proposedChanges.length > 5
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid repository or changes."
+            });
+        }
+
+        // Create temporary repository copy
+        workspacePath = await createWorkspace(
+            installation_id,
+            owner,
+            repo
+        );
+
+        // Apply AI-generated changes
+        await applyProposedChanges(
+            workspacePath,
+            proposedChanges
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Workspace prepared successfully.",
+            changedFiles: proposedChanges.map(
+                (change) => change.path
+            )
+        });
+
+    } catch (error) {
+        console.error("Workspace Error:", error.message);
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to prepare workspace."
+        });
+
+    } finally {
+        if (workspacePath) {
+            try {
+                await removeWorkspace(workspacePath);
+            } catch (cleanupError) {
+                console.error(
+                    "Workspace cleanup failed:",
+                    cleanupError.message
+                );
+            }
+        }
     }
 });
 
