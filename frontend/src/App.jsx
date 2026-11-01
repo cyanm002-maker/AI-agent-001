@@ -15,11 +15,16 @@ function App() {
     // Repository explorer states
     const [owner, setOwner] = useState("");
     const [repoName, setRepoName] = useState("");
-
     const [repositoryInfo, setRepositoryInfo] = useState(null);
     const [files, setFiles] = useState([]);
     const [treeTruncated, setTreeTruncated] = useState(false);
 
+    // File viewer states
+    const [selectedFile, setSelectedFile] = useState(null);
+    const [fileContent, setFileContent] = useState("");
+    const [fileLoading, setFileLoading] = useState(false);
+
+    // Loading states
     const [loading, setLoading] = useState(false);
 
     // 1. Login using GitHub
@@ -64,14 +69,12 @@ function App() {
                 return;
             }
 
-            const accessToken = data.session.access_token;
-
             const response = await fetch(
                 "http://localhost:5000/api/profile",
                 {
                     method: "GET",
                     headers: {
-                        Authorization: `Bearer ${accessToken}`
+                        Authorization: `Bearer ${data.session.access_token}`
                     }
                 }
             );
@@ -105,6 +108,8 @@ function App() {
         setRepositories([]);
         setRepositoryInfo(null);
         setFiles([]);
+        setSelectedFile(null);
+        setFileContent("");
         setTreeTruncated(false);
 
         setMessage("Logged out successfully.");
@@ -134,7 +139,7 @@ function App() {
                         Authorization: `Bearer ${data.session.access_token}`
                     },
                     body: JSON.stringify({
-                        installation_id: installationId
+                        installation_id: installationId.trim()
                     })
                 }
             );
@@ -154,7 +159,42 @@ function App() {
         }
     };
 
-    // 6. Explore repository and fetch file tree
+    // 6. Select a repository
+    const handleSelectRepository = (repo) => {
+        // Extract owner and repository name
+        const fullNameParts = (repo.full_name || "").split("/");
+
+        const ownerName =
+            repo.owner?.login ||
+            fullNameParts[0];
+
+        const repositoryName =
+            repo.name ||
+            fullNameParts[1];
+
+        // Validate extracted information
+        if (!ownerName || !repositoryName) {
+            console.error("Repository data:", repo);
+            setMessage("Unable to identify repository owner or name.");
+            return;
+        }
+
+        setOwner(ownerName);
+        setRepoName(repositoryName);
+
+        // Clear previously selected repository data
+        setRepositoryInfo(null);
+        setFiles([]);
+        setSelectedFile(null);
+        setFileContent("");
+        setTreeTruncated(false);
+
+        setMessage(
+            `Selected ${ownerName}/${repositoryName}. Click Explore Repository.`
+        );
+    };
+
+    // 7. Explore repository and fetch file tree
     const handleExploreRepository = async () => {
         try {
             if (
@@ -168,6 +208,11 @@ function App() {
 
             setLoading(true);
             setMessage("");
+
+            setSelectedFile(null);
+            setFileContent("");
+            setRepositoryInfo(null);
+            setFiles([]);
 
             const { data, error } = await supabase.auth.getSession();
 
@@ -185,7 +230,7 @@ function App() {
                         Authorization: `Bearer ${data.session.access_token}`
                     },
                     body: JSON.stringify({
-                        installation_id: installationId,
+                        installation_id: installationId.trim(),
                         owner: owner.trim(),
                         repo: repoName.trim()
                     })
@@ -211,6 +256,60 @@ function App() {
             setMessage(error.message);
         } finally {
             setLoading(false);
+        }
+    };
+
+    // 8. Read an individual repository file
+    const handleReadFile = async (file) => {
+        try {
+            if (file.type !== "blob") {
+                return;
+            }
+
+            setSelectedFile(file.path);
+            setFileContent("");
+            setFileLoading(true);
+            setMessage("");
+
+            const { data, error } = await supabase.auth.getSession();
+
+            if (error || !data.session) {
+                setMessage("Please sign in first.");
+                return;
+            }
+
+            const response = await fetch(
+                "http://localhost:5000/api/repositories/file",
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${data.session.access_token}`
+                    },
+                    body: JSON.stringify({
+                        installation_id: installationId.trim(),
+                        owner: owner.trim(),
+                        repo: repoName.trim(),
+                        path: file.path
+                    })
+                }
+            );
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                setMessage(result.message || "Unable to read file.");
+                setFileContent("");
+                return;
+            }
+
+            setFileContent(result.file.content);
+            setMessage("File loaded successfully!");
+
+        } catch (error) {
+            setMessage(error.message);
+        } finally {
+            setFileLoading(false);
         }
     };
 
@@ -284,9 +383,7 @@ function App() {
             {/* GitHub Repository Access */}
             <h2>GitHub Repository Access</h2>
 
-            <p>
-                Enter the installation ID of your GitHub App.
-            </p>
+            <p>Enter your GitHub App installation ID.</p>
 
             <input
                 type="text"
@@ -340,13 +437,7 @@ function App() {
                             </a>
 
                             <button
-                                onClick={() => {
-                                    setOwner(repo.owner.login);
-                                    setRepoName(repo.name);
-                                    setMessage(
-                                        "Repository selected. Click Explore Repository."
-                                    );
-                                }}
+                                onClick={() => handleSelectRepository(repo)}
                                 style={{ marginLeft: "10px" }}
                             >
                                 Select Repository
@@ -412,9 +503,7 @@ function App() {
                             : "Public"}
                     </p>
 
-                    <p>
-                        Total Items: {files.length}
-                    </p>
+                    <p>Total Items: {files.length}</p>
 
                     {treeTruncated && (
                         <p style={{ color: "orange" }}>
@@ -434,7 +523,12 @@ function App() {
                         <p>No files found.</p>
                     ) : (
                         files.map((file) => {
-                            const depth = file.path.split("/").length - 1;
+                            const depth =
+                                file.path.split("/").length - 1;
+
+                            const isDirectory = file.type === "tree";
+                            const isSelected =
+                                selectedFile === file.path;
 
                             return (
                                 <div
@@ -443,15 +537,64 @@ function App() {
                                         paddingLeft: `${depth * 25}px`,
                                         paddingTop: "6px",
                                         paddingBottom: "6px",
-                                        borderBottom: "1px solid #eee"
+                                        borderBottom: "1px solid #eee",
+                                        background: isSelected
+                                            ? "#e8f0fe"
+                                            : "transparent"
                                     }}
                                 >
-                                    {file.type === "tree" ? "📁" : "📄"}
-                                    {" "}
-                                    {file.path.split("/").pop()}
+                                    {isDirectory ? "📁" : "📄"}
+
+                                    <button
+                                        onClick={() => handleReadFile(file)}
+                                        disabled={isDirectory}
+                                        style={{
+                                            border: "none",
+                                            background: "transparent",
+                                            cursor: isDirectory
+                                                ? "default"
+                                                : "pointer",
+                                            marginLeft: "5px",
+                                            color: isDirectory
+                                                ? "#777"
+                                                : "blue",
+                                            fontSize: "15px"
+                                        }}
+                                    >
+                                        {file.path.split("/").pop()}
+                                    </button>
                                 </div>
                             );
                         })
+                    )}
+                </div>
+            )}
+
+            {/* Selected File Content */}
+            {selectedFile && (
+                <div style={{ marginTop: "30px" }}>
+                    <hr />
+
+                    <h2>File Viewer</h2>
+                    <h3>{selectedFile}</h3>
+
+                    {fileLoading ? (
+                        <p>Loading file content...</p>
+                    ) : (
+                        <pre
+                            style={{
+                                background: "#1e1e1e",
+                                color: "#d4d4d4",
+                                padding: "20px",
+                                borderRadius: "8px",
+                                overflowX: "auto",
+                                whiteSpace: "pre-wrap",
+                                overflowWrap: "anywhere",
+                                lineHeight: "1.5"
+                            }}
+                        >
+                            {fileContent}
+                        </pre>
                     )}
                 </div>
             )}
